@@ -1,0 +1,30 @@
+# Synology NAS example — cross-subvolume setup with reflinks
+# Downloads and media are on different Btrfs subvolumes, so we mount
+# /volume1 as a single volume and use PATH_MAP to translate qBit's paths.
+services:
+  relinkarr:
+    image: ghcr.io/epheterson/relinkarr:latest
+    container_name: relinkarr
+    restart: unless-stopped
+    ports:
+      - 7585:7585
+    environment:
+      - PUID=1026
+      - PGID=100
+      - TZ=America/New_York
+      - QBIT_URL=http://nas-ip:8080
+      - QBIT_USER=admin
+      - QBIT_PASS=adminadmin
+      - MEDIA_DIRS=/volume1/media/tv,/volume1/media/movies
+      - POLL_INTERVAL=30
+      - PATH_MAP=/downloads:/volume1/downloads
+      # - LOG_LEVEL=DEBUG
+    volumes:
+      - relinkarr-config:/config
+      # Single /volume1 mount enables reflinks between Btrfs subvolumes.
+      # Separate mounts (e.g., -v /volume1/downloads:/downloads) would
+      # appear as different devices and break both hardlinks and reflinks.
+      - /volume1:/volume1
+
+volumes:
+  relinkarr-config:

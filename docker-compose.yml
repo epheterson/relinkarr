@@ -1,0 +1,25 @@
+services:
+  relinkarr:
+    image: ghcr.io/epheterson/relinkarr:latest
+    container_name: relinkarr
+    restart: unless-stopped
+    ports:
+      - 7585:7585
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York
+      - QBIT_URL=http://qbittorrent:8080
+      - QBIT_USER=admin
+      - QBIT_PASS=adminadmin
+      - MEDIA_DIRS=/data/media/tv,/data/media/movies
+      - POLL_INTERVAL=30
+      # - LOG_LEVEL=DEBUG
+    volumes:
+      - relinkarr-config:/config
+      # Mount the same /data volume as your *arr stack and qBittorrent.
+      # All containers must see the same filesystem for hardlinks to work.
+      - /data:/data
+
+volumes:
+  relinkarr-config:
