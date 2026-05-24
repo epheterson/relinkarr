@@ -4,7 +4,7 @@
 [![Docker](https://img.shields.io/badge/docker-ghcr.io-blue)](https://ghcr.io/epheterson/relinkarr)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 
-**Automatic Btrfs reflink dedup for downloads. Set it up, forget about it.**
+**Seed after importing. Any app, any system. Zero wasted disk.**
 
 ## The problem
 
