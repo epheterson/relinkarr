@@ -8,16 +8,15 @@
 
 ## The problem
 
-[Hardlinks have limitations](https://trash-guides.info/Hardlinks/Hardlinks-and-Instant-Moves/):
-- They **can't cross** filesystems, partitions, volumes, or mounts
-- They **can't cross** Btrfs subvolumes (e.g., separate Synology shared folders)
-- Not every app creates them — Soulseek, manual copies, scripts, and many import flows just copy
+You download a file. Something imports it to your media library — Sonarr, Radarr, Soulseek, a script, a manual copy. Now you have two copies of the same file. You can't delete the download because you're still seeding. Your disk usage doubles for no reason.
 
-When a file gets copied instead of hardlinked, you have two full copies on disk. If you're seeding, you can't delete the download copy without losing the seed. Your storage doubles for no reason.
+This happens every time an import copies instead of hardlinks. And [hardlinks have limitations](https://trash-guides.info/Hardlinks/Hardlinks-and-Instant-Moves/) — they can't cross filesystems, partitions, or subvolumes, and not every app creates them.
 
 ## The fix
 
-**Btrfs reflinks** can do what hardlinks can't — they cross subvolume boundaries at zero disk cost. relinkarr watches your downloads, finds duplicates in your media library, and replaces them with reflinks automatically. It doesn't matter what app downloaded the file or what app imported it. Set it up once and stop thinking about it.
+relinkarr watches your downloads, finds duplicates in your media library, and replaces them with zero-cost links automatically. It doesn't matter what app downloaded the file or what imported it.
+
+On Btrfs (Synology, etc.), it uses **reflinks** — copy-on-write clones that cross subvolume boundaries at zero disk cost. On the same filesystem, it uses **hardlinks**. Either way, the duplicate disappears and seeding continues.
 
 ## How it works
 
