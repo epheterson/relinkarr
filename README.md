@@ -4,40 +4,45 @@
 [![Docker](https://img.shields.io/badge/docker-ghcr.io-blue)](https://ghcr.io/epheterson/relinkarr)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 
-**Btrfs reflink dedup — keep seeding across subvolumes with zero duplicate disk usage.**
+**Automatic Btrfs reflink dedup for downloads. Set it up, forget about it.**
 
-## Do you need this?
+## The problem
 
-**Yes, if** your downloads and media are on separate Btrfs subvolumes (e.g., different Synology shared folders). Hardlinks can't cross subvolume boundaries, so any import — Sonarr, Radarr, manual copy, scripts, anything — falls back to a full copy. You end up with two copies of every file. relinkarr replaces the duplicate with a Btrfs reflink (zero disk cost), so your download client keeps seeding without the wasted space.
+[Hardlinks have limitations](https://trash-guides.info/Hardlinks/Hardlinks-and-Instant-Moves/):
+- They **can't cross** filesystems, partitions, volumes, or mounts
+- They **can't cross** Btrfs subvolumes (e.g., separate Synology shared folders)
+- Not every app creates them — Soulseek, manual copies, scripts, and many import flows just copy
 
-**No, if** your downloads and media are on the same filesystem or subvolume. Use [hardlink imports](https://trash-guides.info/Hardlinks/Hardlinks-and-Instant-Moves/) — they handle this already and you don't need an extra tool.
+When a file gets copied instead of hardlinked, you have two full copies on disk. If you're seeding, you can't delete the download copy without losing the seed. Your storage doubles for no reason.
+
+## The fix
+
+**Btrfs reflinks** can do what hardlinks can't — they cross subvolume boundaries at zero disk cost. relinkarr watches your downloads, finds duplicates in your media library, and replaces them with reflinks automatically. It doesn't matter what app downloaded the file or what app imported it. Set it up once and stop thinking about it.
 
 ## How it works
 
-relinkarr watches your download client for seeding files and detects when they've been imported — by Sonarr, Radarr, a script, a manual copy, or anything else that moves or copies files to a media library.
+relinkarr watches your download client and compares against your media directories. It handles both ways files end up duplicated:
 
-**Copy mode** (the default when hardlinks aren't possible):
-
-```
-1. Download client:      /downloads/movie.mkv
-2. Import (any app):     /movies/Movie (2026)/Movie (2026).mkv  ← 2x disk usage
-3. relinkarr detects:    same file in download dir and media library
-4. relinkarr replaces:   download copy → reflink to media copy   ← 0x extra disk
-5. Client keeps seeding ✓  Media library has the real file ✓
-6. Delete torrent:       reflink removed, media library file untouched ✓
-```
-
-**Move mode** (when files are moved rather than copied):
+**Copied files** — download and media copy both exist (2x disk):
 
 ```
-1. Download client:      /data/torrents/episode.mkv
-2. Import (any app):     /data/media/tv/Show/S01E01.mkv  (original gone)
-3. relinkarr detects:    download file is missing
-4. relinkarr restores:   hardlink at original path → media file
-5. Client keeps seeding ✓  Media library has the real file ✓
+/downloads/movie.mkv           ← seeding this
+/movies/Movie (2026)/movie.mkv ← imported copy, 2x disk usage
+
+relinkarr replaces the download copy with a reflink → 0x extra disk
+Delete the torrent later → reflink removed, media file untouched
 ```
 
-Both modes end at the same place: one real file in the media library, one zero-cost link in the download directory.
+**Moved files** — download is gone, can't seed:
+
+```
+/downloads/episode.mkv          ← was here, moved away
+/tv/Show/S01E01.mkv             ← imported file lives here now
+
+relinkarr restores a link at the original path → seeding works again
+```
+
+Either way: one real file, one zero-cost link.
 
 ## Synology NAS / Btrfs
 
@@ -56,7 +61,7 @@ volumes:
   - /volume1:/volume1
 ```
 
-When using a single `/volume1` mount, you'll need `PATH_MAP` if qBit's paths don't match:
+When using a single `/volume1` mount, you'll need `PATH_MAP` if your download client's paths don't match:
 
 ```yaml
 environment:
@@ -68,18 +73,16 @@ volumes:
 
 See [`docker-compose.nas.yml`](docker-compose.nas.yml) for a complete Synology example.
 
-The ideal long-term fix is to follow the [TRaSH Guides folder structure](https://trash-guides.info/Hardlinks/Hardlinks-and-Instant-Moves/) and put downloads + media in the same shared folder so hardlinks work natively. But if you can't restructure your shares, relinkarr bridges the gap.
-
 ## Features
 
-- **Btrfs reflinks across subvolumes** — the thing hardlink imports can't do
-- **Works with any download client and any import flow** — qBittorrent, Deluge, Transmission, manual copies, scripts, anything
-- **Hardlink fallback** — tries hardlink first, falls back to `cp --reflink=always` for cross-subvolume
-- **Safe rollback** — renames to `.bak` before linking; restored automatically on failure
+- **Crosses Btrfs subvolumes** — reflinks work where hardlinks can't
+- **App-agnostic** — doesn't matter what downloaded or imported the files
+- **Set and forget** — runs on a poll loop, deduplicates automatically as files appear
+- **Safe** — renames to `.bak` before linking; restored automatically on failure
 - **Persistent state** — tracks deduped files across restarts via `/config` volume
-- **Cached media index** — scans media directories once, reuses for 5 minutes; safe for large libraries on spinning disks
+- **NAS-friendly** — cached media index avoids hammering spinning disks
 - **Health check and status API** — `/health`, `/api/status`, `/api/history`
-- **PUID/PGID support** — matches your *arr stack permissions
+- **PUID/PGID support** — matches your media stack permissions
 
 ## Quick start
 
