@@ -244,26 +244,65 @@ class MediaIndex:
         log.debug("Media index: %d files", len(by_inode))
 
 
-def files_already_linked(path1, path2, sample_size=4096):
-    """Check if two files are already identical by comparing head and tail bytes."""
+FIDEDUPERANGE = 0xC0189436
+FILE_DEDUPE_RANGE_SAME = 0
+FILE_DEDUPE_RANGE_DIFFERS = 1
+
+# struct file_dedupe_range header:  src_offset(u64) src_length(u64) dest_count(u16) reserved1(u16) reserved2(u32)
+_DEDUP_HDR_FMT = "QQHHI"
+# struct file_dedupe_range_info:    dest_fd(s64) dest_offset(u64) bytes_deduped(u64) status(s32) reserved(u32)
+_DEDUP_INFO_FMT = "qQQiI"
+
+
+def _fmt_size(n):
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1024:
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} PB"
+
+
+def btrfs_dedupe(src_path, dst_path):
+    """Deduplicate dst against src using the kernel FIDEDUPERANGE ioctl.
+
+    Returns bytes deduped (0 if already shared). Raises OSError on failure.
+    Raises ValueError if file contents differ.
+    """
+    import fcntl
+    import struct
+
+    src_fd = os.open(src_path, os.O_RDONLY)
     try:
-        s1 = os.stat(path1)
-        s2 = os.stat(path2)
-        if s1.st_size != s2.st_size:
-            return False
-        if s1.st_ino == s2.st_ino:
-            return True
-        with open(path1, "rb") as f1, open(path2, "rb") as f2:
-            if f1.read(sample_size) != f2.read(sample_size):
-                return False
-            if s1.st_size > sample_size * 2:
-                f1.seek(-sample_size, 2)
-                f2.seek(-sample_size, 2)
-                if f1.read(sample_size) != f2.read(sample_size):
-                    return False
-        return True
-    except OSError:
-        return False
+        dst_fd = os.open(dst_path, os.O_RDWR)
+        try:
+            size = os.fstat(src_fd).st_size
+            offset = 0
+            total_deduped = 0
+            while offset < size:
+                chunk = size - offset
+                header = struct.pack(_DEDUP_HDR_FMT, offset, chunk, 1, 0, 0)
+                dest_info = struct.pack(_DEDUP_INFO_FMT, dst_fd, offset, 0, 0, 0)
+                buf = bytearray(header + dest_info)
+                fcntl.ioctl(src_fd, FIDEDUPERANGE, buf)
+                info_offset = struct.calcsize(_DEDUP_HDR_FMT)
+                _, _, bytes_deduped, status, _ = struct.unpack_from(
+                    _DEDUP_INFO_FMT, buf, info_offset
+                )
+                if status == FILE_DEDUPE_RANGE_DIFFERS:
+                    raise ValueError(
+                        f"Content differs at offset {offset}: {src_path} vs {dst_path}"
+                    )
+                if status < 0:
+                    raise OSError(-status, os.strerror(-status))
+                if bytes_deduped == 0:
+                    break  # already shared from this offset onward
+                total_deduped += bytes_deduped
+                offset += bytes_deduped
+            return total_deduped
+        finally:
+            os.close(dst_fd)
+    finally:
+        os.close(src_fd)
 
 
 def restore_link(original_path, found_path):
@@ -510,31 +549,55 @@ def run(
             if not media_match:
                 tracker.mark_no_match(dl_path)
                 continue
-            if files_already_linked(dl_path, media_match):
-                log.debug("Already linked: %s", dl_name)
-                tracker.mark_deduped(dl_path)
-                continue
-            bak_path = dl_path + ".bak"
             try:
-                os.rename(dl_path, bak_path)
-                link_type = restore_link(dl_path, media_match)
-                os.remove(bak_path)
-                stats["relinked"] += 1
-                stats["deduped"] += 1
-                tracker.mark_deduped(dl_path)
-                tracker.update(dl_path)
-                log.info("Deduped: %s → %s (%s)", dl_name, media_match, link_type)
-                activity.record("dedup", dl_path, media_match, link_type=link_type)
-            except OSError as e:
-                if os.path.exists(bak_path):
-                    if os.path.exists(dl_path):
-                        os.remove(dl_path)
-                    os.rename(bak_path, dl_path)
-                    log.warning("Rolled back %s — reflink failed: %s", dl_name, e)
-                    activity.record("rollback", dl_path, media_match, error=e)
+                if os.stat(dl_path).st_ino == os.stat(media_match).st_ino:
+                    log.debug("Already hardlinked: %s", dl_name)
+                    tracker.mark_deduped(dl_path)
+                    continue
+            except FileNotFoundError:
+                continue
+            try:
+                bytes_deduped = btrfs_dedupe(media_match, dl_path)
+                if bytes_deduped == 0:
+                    log.debug("Already sharing extents: %s", dl_name)
                 else:
-                    log.error("Dedup failed for %s: %s", dl_path, e)
-                    activity.record("error", dl_path, media_match, error=e)
+                    stats["deduped"] += 1
+                    log.info(
+                        "Deduped: %s → %s (%s freed)",
+                        dl_name,
+                        media_match,
+                        _fmt_size(bytes_deduped),
+                    )
+                    activity.record("dedup", dl_path, media_match, link_type="dedupe")
+                tracker.mark_deduped(dl_path)
+            except ValueError as e:
+                log.warning(
+                    "Content mismatch for %s — not a true duplicate: %s", dl_name, e
+                )
+                tracker.mark_no_match(dl_path)
+            except OSError as e:
+                log.warning(
+                    "Dedupe failed for %s, falling back to reflink: %s", dl_name, e
+                )
+                bak_path = dl_path + ".bak"
+                try:
+                    os.rename(dl_path, bak_path)
+                    link_type = restore_link(dl_path, media_match)
+                    os.remove(bak_path)
+                    stats["deduped"] += 1
+                    tracker.mark_deduped(dl_path)
+                    log.info("Deduped: %s → %s (%s)", dl_name, media_match, link_type)
+                    activity.record("dedup", dl_path, media_match, link_type=link_type)
+                except OSError as e2:
+                    if os.path.exists(bak_path):
+                        if os.path.exists(dl_path):
+                            os.remove(dl_path)
+                        os.rename(bak_path, dl_path)
+                        log.warning("Rolled back %s: %s", dl_name, e2)
+                        activity.record("rollback", dl_path, media_match, error=e2)
+                    else:
+                        log.error("Dedup failed for %s: %s", dl_path, e2)
+                        activity.record("error", dl_path, media_match, error=e2)
 
         tracker.save_state()
 
