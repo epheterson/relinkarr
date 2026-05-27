@@ -7,7 +7,7 @@ moves them, and replaces the download directory copy with a zero-cost
 hardlink or reflink. qBit keeps seeding, zero duplicate disk usage.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 import errno
 import json
@@ -97,9 +97,11 @@ class QbitClient:
         self.connected = True
         log.info("Connected to qBittorrent at %s", self.url)
 
-    def get_seeding_torrents(self):
+    def get_tracked_torrents(self):
+        """Return all torrents that should be seeding — including errored ones
+        whose files may have been moved and need relink restoration."""
         torrents = []
-        for status in ("seeding", "stalledUP"):
+        for status in ("seeding", "stalledUP", "errored"):
             r = self.session.get(
                 f"{self.url}/api/v2/torrents/info",
                 params={"filter": status},
@@ -431,7 +433,7 @@ def run(
 
     while not SHUTDOWN:
         try:
-            torrents = qbit.get_seeding_torrents()
+            torrents = qbit.get_tracked_torrents()
             qbit.connected = True
         except requests.RequestException as e:
             qbit.connected = False
