@@ -3,6 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io-blue)](https://ghcr.io/epheterson/relinkarr)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/epheterson/relinkarr/badge)](https://scorecard.dev/viewer/?uri=github.com/epheterson/relinkarr)
 
 **Seed after importing. Any app, any system. Zero wasted disk.**
 
