@@ -1,0 +1,61 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Independent review of each PR, once, when it opens; comment
+# `@coderabbitai review` for another pass after later pushes. Advisory, never
+# a required check: findings are fixed or answered like any outside
+# contribution. Kept quiet: no summary written into the PR description, no
+# walkthrough extras.
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: false
+  poem: false
+  review_status: false
+  in_progress_fortune: false
+  collapse_walkthrough: true
+  changed_files_summary: false
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  suggested_reviewers: false
+  auto_review:
+    enabled: true
+    auto_incremental_review: false
+    drafts: false
+  path_instructions:
+    - path: "relinkarr.py"
+      instructions: >-
+        Runs unattended against people's real media libraries and active
+        torrents. The media file is the source of truth: flag any path that
+        could delete, move, truncate or write to a file under the media
+        directories. The download path may only be replaced by a link to an
+        identical file, and every replacement must roll back to the original
+        on failure, including partial failure (rename then link then remove).
+        A torrent must keep seeding: the download path has to exist with the
+        same bytes after every outcome. Treat a content mismatch, an
+        unexpected errno, a path outside the configured roots or a path-map
+        miss as "skip and log", never as "proceed". Hardlinks must not cross
+        devices; reflinks and FIDEDUPERANGE only on filesystems that support
+        them, with the ioctl struct layout matching the kernel ABI.
+    - path: "entrypoint.sh"
+      instructions: >-
+        Container entrypoint. Only /config may be chowned; nothing under the
+        mounted downloads or media paths may be chowned, chmodded or
+        rewritten.
+    - path: "{Dockerfile,docker-compose*.yml}"
+      instructions: >-
+        The process must drop to the unprivileged relinkarr user (su-exec)
+        before touching any file; no secrets baked in.
+        Example mounts must keep downloads and media under one mount so
+        reflinks across Btrfs subvolumes still work.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Actions must be pinned to full commit SHAs with least-privilege
+        permissions. Images publish to GHCR from main and v* tags only.
+chat:
+  auto_reply: true
